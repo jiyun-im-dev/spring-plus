@@ -12,6 +12,10 @@ import org.example.expert.domain.common.exception.InvalidRequestException;
 import org.example.expert.domain.user.entity.User;
 import org.example.expert.domain.user.enums.UserRole;
 import org.example.expert.domain.user.repository.UserRepository;
+import org.example.expert.security.CustomUserDetails;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +27,7 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final AuthenticationManager authenticationManager;
 
     @Transactional
     public SignupResponse signup(SignupRequest signupRequest) {
@@ -48,15 +53,18 @@ public class AuthService {
     }
 
     public SigninResponse signin(SigninRequest signinRequest) {
-        User user = userRepository.findByEmail(signinRequest.getEmail()).orElseThrow(
-                () -> new InvalidRequestException("가입되지 않은 유저입니다."));
+        // AuthenticationManager를 통해 이메일 및 비밀번호 검증 처리
+        Authentication authentication = authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(
+                        signinRequest.getEmail(), signinRequest.getPassword()
+                )
+        );
 
-        // 로그인 시 이메일과 비밀번호가 일치하지 않을 경우 401을 반환합니다.
-        if (!passwordEncoder.matches(signinRequest.getPassword(), user.getPassword())) {
-            throw new AuthException("잘못된 비밀번호입니다.");
-        }
+        // 인증 객체에서 UserDetails 추출
+        CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
 
-        String bearerToken = jwtUtil.createToken(user.getId(), user.getEmail(), user.getNickname(), user.getUserRole());
+        // 토큰 생성
+        String bearerToken = jwtUtil.createToken(userDetails);
 
         return new SigninResponse(bearerToken);
     }
