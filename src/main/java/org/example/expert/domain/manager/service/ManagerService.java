@@ -3,6 +3,7 @@ package org.example.expert.domain.manager.service;
 import lombok.RequiredArgsConstructor;
 import org.example.expert.domain.common.dto.AuthUser;
 import org.example.expert.domain.common.exception.InvalidRequestException;
+import org.example.expert.domain.log.service.LogService;
 import org.example.expert.domain.manager.dto.request.ManagerSaveRequest;
 import org.example.expert.domain.manager.dto.response.ManagerResponse;
 import org.example.expert.domain.manager.dto.response.ManagerSaveResponse;
@@ -28,32 +29,51 @@ public class ManagerService {
     private final ManagerRepository managerRepository;
     private final UserRepository userRepository;
     private final TodoRepository todoRepository;
+    private final LogService logService;
 
     @Transactional
     public ManagerSaveResponse saveManager(AuthUser authUser, long todoId, ManagerSaveRequest managerSaveRequest) {
-        // 일정을 만든 유저
-        User user = User.fromAuthUser(authUser);
-        Todo todo = todoRepository.findById(todoId)
-                .orElseThrow(() -> new InvalidRequestException("Todo not found"));
+        // 로그 정보
+        String action = "매니저 등록 요청";
+        String detail;
 
-        if (todo.getUser() == null || !ObjectUtils.nullSafeEquals(user.getId(), todo.getUser().getId())) {
-            throw new InvalidRequestException("담당자를 등록하려고 하는 유저가 유효하지 않거나, 일정을 만든 유저가 아닙니다.");
+        try {
+            // 일정을 만든 유저
+            User user = User.fromAuthUser(authUser);
+            Todo todo = todoRepository.findById(todoId)
+                    .orElseThrow(() -> new InvalidRequestException("Todo not found"));
+
+            if (todo.getUser() == null || !ObjectUtils.nullSafeEquals(user.getId(), todo.getUser().getId())) {
+                throw new InvalidRequestException("담당자를 등록하려고 하는 유저가 유효하지 않거나, 일정을 만든 유저가 아닙니다.");
+            }
+
+            User managerUser = userRepository.findById(managerSaveRequest.getManagerUserId())
+                    .orElseThrow(() -> new InvalidRequestException("등록하려고 하는 담당자 유저가 존재하지 않습니다."));
+
+            if (ObjectUtils.nullSafeEquals(user.getId(), managerUser.getId())) {
+                throw new InvalidRequestException("일정 작성자는 본인을 담당자로 등록할 수 없습니다.");
+            }
+
+            Manager newManagerUser = new Manager(managerUser, todo);
+            Manager savedManagerUser = managerRepository.save(newManagerUser);
+
+            // 성공 시 로그 저장
+            detail = String.format("성공 - 작성자 ID: %d, 매니저 ID: %d, Todo ID: %d",
+                    user.getId(), managerUser.getId(), todo.getId());
+            logService.saveLog(action, detail);
+
+            return new ManagerSaveResponse(
+                    savedManagerUser.getId(),
+                    new UserResponse(managerUser.getId(), managerUser.getEmail())
+            );
+        } catch (Exception e) {
+            // 실패 시 로그 저장
+            detail = String.format("실패 - 작성자 ID: %d, 매니저 ID: %d, Todo ID: %d, 이유: %s",
+                    authUser.getId(), managerSaveRequest.getManagerUserId(), todoId, e.getMessage());
+            logService.saveLog(action, detail);
+
+            throw e; // 트랜잭션 롤백 위해 다시 던짐
         }
-
-        User managerUser = userRepository.findById(managerSaveRequest.getManagerUserId())
-                .orElseThrow(() -> new InvalidRequestException("등록하려고 하는 담당자 유저가 존재하지 않습니다."));
-
-        if (ObjectUtils.nullSafeEquals(user.getId(), managerUser.getId())) {
-            throw new InvalidRequestException("일정 작성자는 본인을 담당자로 등록할 수 없습니다.");
-        }
-
-        Manager newManagerUser = new Manager(managerUser, todo);
-        Manager savedManagerUser = managerRepository.save(newManagerUser);
-
-        return new ManagerSaveResponse(
-                savedManagerUser.getId(),
-                new UserResponse(managerUser.getId(), managerUser.getEmail())
-        );
     }
 
     public List<ManagerResponse> getManagers(long todoId) {
